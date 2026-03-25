@@ -14,6 +14,16 @@ from typing import Dict, Any, List, Tuple
 import streamlit as st
 from abstain.tourism import decide_tourism_abstain, TOURISM_ABSTAIN_MESSAGE
 from dotenv import load_dotenv
+from config import (
+    APP_ENV,
+    DEBUG,
+    OPENAI_API_KEY,
+    WASTE_LIFE_DB_DIR,
+    KANKO_DB_DIR,
+    LOG_DIR,
+    DATA_DIR,
+    STREAMLIT_PORT,
+)
 from openai import OpenAI
 import chromadb
 from chromadb.config import Settings
@@ -24,18 +34,9 @@ from chromadb.config import Settings
 #WASTE_LIFE_DB_DIR = "chroma_db"  # okazaki_waste_rag 側
 #KANKO_DB_DIR = r"C:/Users/harunobu/Desktop/okazaki_rag/chroma_db"  # ★観光側（必要なら書換）
 
-BASE_WASTE = Path(__file__).resolve().parents[1]          # .../okazaki_waste_rag
-PORTAL_ROOT = BASE_WASTE.parents[0]                       # .../okazaki-ai-portal
+BASE_WASTE = Path(__file__).resolve().parents[1]
+PORTAL_ROOT = BASE_WASTE.parents[0]
 
-#WASTE_LIFE_DB_DIR = str(BASE_WASTE / "chroma_db")
-#KANKO_DB_DIR = str(PORTAL_ROOT / "okazaki_rag" / "chroma_db")
-
-ENV_PATH = os.getenv("APP_ENV_FILE", "/opt/okazaki-ai-portal/shared/.env")
-load_dotenv(ENV_PATH)
-
-WASTE_LIFE_DB_DIR = Path(os.getenv("WASTE_LIFE_DB_DIR", "/opt/okazaki-ai-portal/shared/chroma_db"))
-KANKO_DB_DIR = Path(os.getenv("KANKO_DB_DIR", "/opt/okazaki-ai-portal/shared/chroma_db"))
-LOG_DIR = Path(os.getenv("LOG_DIR", "/opt/okazaki-ai-portal/shared/logs"))
 # ===== コレクション名 =====
 COLLECTIONS = {
     "ごみ": {"db": "waste", "name": "okazaki_waste"},
@@ -901,29 +902,6 @@ def get_run_id_from_url(default: str = "") -> str:
         return val if val else default
     except Exception:
         return default
-def get_run_id_from_url(default: str = "") -> str:
-    """
-    URLクエリ ?run_id=beta_volatile_20260314_01 のような値を取得する。
-    """
-    try:
-        qp = st.query_params
-        val = qp.get("run_id", default)
-        if isinstance(val, (list, tuple)):
-            val = val[0] if val else default
-        val = str(val).strip()
-        return val if val else default
-    except Exception:
-        pass
-
-    try:
-        qp = st.experimental_get_query_params()
-        val = qp.get("run_id", [default])
-        if isinstance(val, list):
-            val = val[0] if val else default
-        val = str(val).strip()
-        return val if val else default
-    except Exception:
-        return default
 def inject_admin_ui_css() -> None:
     st.markdown("""
     <style>
@@ -1437,13 +1415,13 @@ def main():
         initial_sidebar_state="expanded",
     )
 
-    load_dotenv()
+    ###load_dotenv()
     if "session_id" not in st.session_state:
         st.session_state["session_id"] = uuid.uuid4().hex
     if "request_seq" not in st.session_state:
         st.session_state["request_seq"] = 0
 
-    api_key = os.getenv("OPENAI_API_KEY")
+    api_key = OPENAI_API_KEY
     if not api_key:
         st.error("OPENAI_API_KEY が .env にありません。")
         st.stop()
@@ -1556,7 +1534,7 @@ def main():
     case_id = st.session_state["request_seq"]   # 1,2,3... と連番になる
 
 
-    log_path = str(PORTAL_ROOT / "logs" / "qa_log.jsonl")
+    log_path = str(LOG_DIR / "qa_log.jsonl")
     elapsed_ms = int((time.time() - t0) * 1000)
 
     log_obj = {
