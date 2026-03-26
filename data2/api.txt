@@ -1,0 +1,7 @@
+OPENAI_API_KEY="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"
+
+$env:OPENAI_API_KEY = ""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"
+"
+
+
+[System.Environment]::SetEnvironmentVariable('OPENAI_API_KEY', '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', 'User')

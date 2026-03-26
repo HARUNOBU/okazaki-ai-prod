@@ -1,0 +1,14 @@
+okazaki_waste_rag/src/upsert_chroma_waste.py
+okazaki_waste_rag/src/upsert_chroma_life.py
+okazaki_waste_rag/src/build_events_docs.py
+okazaki_waste_rag/src/upsert_chroma_events.py
+okazaki_waste_rag/src/build_events_faq.py
+okazaki_waste_rag/src/tools/build_tourism_fixed_faq.py
+okazaki_waste_rag/src/data/events_2026.csv
+okazaki_waste_rag/src/data/events/okazaki_events_faq.jsonl
+
+
+okazaki_events_fixed_faq
+
+
+$env:OPENAI_API_KEY = ""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"
