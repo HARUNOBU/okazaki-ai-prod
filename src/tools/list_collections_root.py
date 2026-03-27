@@ -2,15 +2,15 @@ from pathlib import Path
 import chromadb
 from chromadb.config import Settings
 
-PORTAL_ROOT = Path(__file__).resolve().parents[1]
-dbdir = PORTAL_ROOT / "chroma_db"
+portal_root = Path(__file__).resolve().parents[1]
+dbdir = portal_root / "chroma_db"
 
 client = chromadb.PersistentClient(
     path=str(dbdir),
     settings=Settings(anonymized_telemetry=False)
 )
 
-for c in client.list_collections():
+cols = client.list_collections()
+for c in cols:
     name = c.name if hasattr(c, "name") else str(c)
-    col = client.get_collection(name)
-    print(f"{name}: {col.count()}")
+    print(name)

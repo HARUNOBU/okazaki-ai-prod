@@ -1,0 +1,87 @@
+def extract_top_sources(cites: list[str] | None, limit: int = 3) -> list[dict]:
+    """
+    cites 文字列から、最低限の根拠情報を構造化して残す。
+    うまく取れない場合でも url だけ残す。
+    """
+    out = []
+    if not cites:
+        return out
+
+    for c in cites:
+        if len(out) >= limit:
+            break
+        s = (c or "").strip()
+
+        # 雑にURL抽出（最小）
+        url = ""
+        for token in s.split():
+            if token.startswith("http://") or token.startswith("https://"):
+                url = token
+                break
+
+        # ページらしき数字があれば拾う（例: "p.12" "ページ 12"）
+        page = None
+        # 超簡易：数字の連続を拾う（過剰マッチしうるが最小実装）
+        digits = "".join(ch if ch.isdigit() else " " for ch in s).split()
+        if digits:
+            try:
+                page = int(digits[-1])
+            except Exception:
+                page = None
+
+        out.append({"raw": s[:200], "url": url, "page": page})
+
+    return out
+
+
+
+elapsed_ms = int((time.time() - t0) * 1000)
+
+log_obj = {
+    "ts": datetime.now(timezone.utc).isoformat(),
+    "session_id": st.session_state.get("session_id"),
+    "request_id": st.session_state.get("request_id"),
+
+    "category": category,
+    "query": user_query,
+
+    "status": status,  # "ok" / "abstain" / "error"
+    "answered_by": st.session_state.get("answered_by", "none"),
+    "collection_used": st.session_state.get("collection_used"),
+
+    "main_best_dist": st.session_state.get("main_best_dist"),
+    "faq_best_dist": st.session_state.get("faq_best_dist"),
+
+    "dist_threshold_main": DIST_THRESHOLD_BY_CAT.get(category),
+    "dist_threshold_faq": (FAQ_DIST_THRESHOLD_BY_CAT.get(category) if "FAQ_DIST_THRESHOLD_BY_CAT" in globals() else None),
+
+    "top_sources": extract_top_sources(cites, limit=3),
+    "answer_preview": (ans or "")[:200],
+
+    "latency_ms": elapsed_ms,
+
+    # 任意：where 条件があるなら残す
+    "where": where,
+}
+
+append_log(log_path, log_obj)
+
+
+
+
+import time
+import uuid
+from datetime import datetime, timezone
+
+
+
+if "session_id" not in st.session_state:
+    st.session_state["session_id"] = uuid.uuid4().hex
+if "request_seq" not in st.session_state:
+    st.session_state["request_seq"] = 0
+
+
+
+st.session_state["request_seq"] += 1
+st.session_state["request_id"] = f'{st.session_state["session_id"]}-{st.session_state["request_seq"]:06d}'
+t0 = time.time()

@@ -1,21 +1,29 @@
+# tools/build_tourism_fixed_faq.py
 from __future__ import annotations
 
-import argparse
+import os
 import json
-import sys
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import List, Dict, Any, Tuple
 
 import chromadb
 from chromadb.config import Settings
 from openai import OpenAI
 
-sys.path.append(str(Path(__file__).resolve().parents[1]))
-from config import KANKO_DB_DIR, OPENAI_API_KEY, DATA_DIR
 
+# =========================
+# パス解決（app_portal_v3.py と同じ思想）
+# =========================
+BASE_WASTE = Path(__file__).resolve().parents[1]          # .../okazaki_waste_rag/src
+PORTAL_ROOT = BASE_WASTE.parents[0]                      # .../okazaki-ai-portal
+KANKO_DB_DIR = str(PORTAL_ROOT / "chroma_db")
+
+# =========================
+# 設定
+# =========================
 EMBED_MODEL = "text-embedding-3-small"
-DEFAULT_COLLECTION = "okazaki_events_fixed_faq"
+DEFAULT_COLLECTION = "okazaki_events_fixed_faq"  # ★固定情報専用（新設）
 
 
 def read_jsonl(path: Path) -> List[Dict[str, Any]]:
@@ -23,95 +31,82 @@ def read_jsonl(path: Path) -> List[Dict[str, Any]]:
     with path.open("r", encoding="utf-8") as f:
         for ln in f:
             ln = ln.strip()
-            if ln:
-                rows.append(json.loads(ln))
+            if not ln:
+                continue
+            rows.append(json.loads(ln))
     return rows
 
 
-def sanitize_meta(meta: Dict[str, Any]) -> Dict[str, Any]:
-    out: Dict[str, Any] = {}
-    for k, v in (meta or {}).items():
-        if v is None:
-            continue
-        if isinstance(v, (str, int, float, bool)):
-            out[k] = v
-        else:
-            out[k] = json.dumps(v, ensure_ascii=False)
-    return out
-
-
 def normalize_item(x: Dict[str, Any]) -> Tuple[str, str, Dict[str, Any]]:
-    _id = str(x.get("id") or x.get("qid") or "").strip()
+    """
+    returns: (id, text, meta)
+    - id: str 必須
+    - text: str 必須
+    - meta: dict（url/source を保持）
+    """
+    _id = str(x.get("id") or "").strip()
     if not _id:
-        raise ValueError("jsonl item missing id/qid")
+        raise ValueError("jsonl item missing id")
 
-    title = str(x.get("title") or "").strip()
-    text = str(x.get("text") or "").strip()
-    if not text:
-        q = str(x.get("question") or "").strip()
-        a = str(x.get("answer") or "").strip()
-        if q:
-            text = f"Q: {q}\nA: {a}".strip()
+    title = (x.get("title") or "").strip()
+    text = (x.get("text") or "").strip()
     if not text:
         raise ValueError(f"jsonl item missing text: id={_id}")
 
     meta = dict(x.get("meta") or {})
-    if "question" in x and "question" not in meta:
-        meta["question"] = x.get("question")
-    if "answer" in x and "answer" not in meta:
-        meta["answer"] = x.get("answer")
-    if "pdf_url" in x and "pdf_url" not in meta:
-        meta["pdf_url"] = x.get("pdf_url")
-    if "page" in x and "page" not in meta:
-        meta["page"] = x.get("page")
-    if "url" not in meta and meta.get("pdf_url"):
+    # よく使うキーを整形
+    if "url" not in meta and "pdf_url" in meta:
         meta["url"] = meta["pdf_url"]
-    if title:
-        meta["title"] = title
-    meta.setdefault("source", "fixed_faq")
-    meta.setdefault("category", "観光")
+    meta["title"] = title
 
-    return _id, text, sanitize_meta(meta)
+    # Chromaのメタは基本primitive推奨
+    for k, v in list(meta.items()):
+        if isinstance(v, (dict, list)):
+            meta[k] = json.dumps(v, ensure_ascii=False)
+
+    return _id, text, meta
 
 
 def embed_texts(oa: OpenAI, texts: List[str], batch_size: int = 64, sleep_sec: float = 0.2) -> List[List[float]]:
+    """
+    OpenAI embeddings をバッチで取得
+    """
     out: List[List[float]] = []
     for i in range(0, len(texts), batch_size):
         chunk = texts[i:i + batch_size]
         resp = oa.embeddings.create(model=EMBED_MODEL, input=chunk)
+        # resp.data は入力順で返る
         out.extend([d.embedding for d in resp.data])
         time.sleep(sleep_sec)
     return out
 
 
-def resolve_jsonl_path(arg_path: str | None) -> Path:
-    if arg_path:
-        return Path(arg_path)
-    candidates = [
-        DATA_DIR / "tourism_fixed_faq.jsonl",
-        DATA_DIR / "events" / "tourism_fixed_faq.jsonl",
-        DATA_DIR / "tourism" / "tourism_fixed_faq.jsonl",
-    ]
-    for p in candidates:
-        if p.exists():
-            return p
-    raise FileNotFoundError("tourism_fixed_faq.jsonl not found")
+def get_client(db_dir: str) -> chromadb.PersistentClient:
+    return chromadb.PersistentClient(
+        path=db_dir,
+        settings=Settings(anonymized_telemetry=False)
+    )
 
 
 def main():
+    import argparse
+
     ap = argparse.ArgumentParser()
-    ap.add_argument("--jsonl", default="", help="tourism_fixed_faq.jsonl のパス")
-    ap.add_argument("--collection", default=DEFAULT_COLLECTION)
-    ap.add_argument("--db", default=str(KANKO_DB_DIR))
-    ap.add_argument("--reset", action="store_true")
-    ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--jsonl", required=True, help="tourism_fixed_faq.jsonl のパス")
+    ap.add_argument("--collection", default=DEFAULT_COLLECTION, help="作成/更新するコレクション名")
+    ap.add_argument("--db", default=KANKO_DB_DIR, help="ChromaDBディレクトリ（観光DB）")
+    ap.add_argument("--reset", action="store_true", help="コレクションを削除して作り直す（全入れ替え）")
+    ap.add_argument("--dry-run", action="store_true", help="DB更新せず検査だけ")
     args = ap.parse_args()
 
-    api_key = OPENAI_API_KEY
+    api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
-        raise RuntimeError("OPENAI_API_KEY not found")
+        raise RuntimeError("OPENAI_API_KEY が環境変数または .env にありません。")
 
-    jsonl_path = resolve_jsonl_path(args.jsonl)
+    jsonl_path = Path(args.jsonl)
+    if not jsonl_path.exists():
+        raise FileNotFoundError(jsonl_path)
+
     rows = read_jsonl(jsonl_path)
 
     ids: List[str] = []
@@ -124,12 +119,12 @@ def main():
         texts.append(text)
         metas.append(meta)
 
-    if len(ids) != len(set(ids)):
-        dup = sorted({i for i in ids if ids.count(i) > 1})
-        raise ValueError(f"Duplicate ids found: {dup[:10]} total={len(dup)}")
+    # 事前検査：重複ID
+    dup = {i for i in ids if ids.count(i) > 1}
+    if dup:
+        raise ValueError(f"Duplicate ids found: {sorted(list(dup))[:10]} ... total={len(dup)}")
 
     print(f"[OK] jsonl loaded: {len(ids)} items")
-    print(f"      jsonl: {jsonl_path}")
     print(f"      db_dir: {args.db}")
     print(f"      collection: {args.collection}")
 
@@ -140,10 +135,7 @@ def main():
     oa = OpenAI(api_key=api_key)
     embs = embed_texts(oa, texts)
 
-    client = chromadb.PersistentClient(
-        path=str(args.db),
-        settings=Settings(anonymized_telemetry=False)
-    )
+    client = get_client(args.db)
 
     if args.reset:
         try:
@@ -153,7 +145,14 @@ def main():
             pass
 
     col = client.get_or_create_collection(args.collection)
-    col.upsert(ids=ids, documents=texts, metadatas=metas, embeddings=embs)
+
+    # upsert（上書き可能）
+    col.upsert(
+        ids=ids,
+        documents=texts,
+        metadatas=metas,
+        embeddings=embs
+    )
 
     print("[DONE] upserted:", len(ids))
     print("[DONE] collection_count:", col.count())
